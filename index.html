@@ -76,7 +76,7 @@
       white-space: nowrap;
     }
 
-    /* ⭐ 手機版：一列一個 K 線圖，旁邊留點空間 */
+    /* ⭐ 一列一個 K 線圖，旁邊留點空間 */
     #charts {
       padding: 12px 12px 80px 12px; /* 底部多留一點空間避免貼頁尾 */
       display: grid;
@@ -111,7 +111,7 @@
 
     .chart {
       width: 100%;
-      height: 450px; /* K 線圖高度 450px */
+      height: 350px;
     }
 
     .chart-pct {
@@ -159,7 +159,9 @@
     <label for="interval">時框：</label>
     <select id="interval">
       <option value="15m">15 分 K</option>
+      <option value="30m">30 分 K</option>
       <option value="1h">1 小時 K</option>
+      <option value="2h">2 小時 K</option>
       <option value="4h">4 小時 K</option>
     </select>
 
@@ -189,8 +191,8 @@
 
   <script>
     const BASE_URL = "https://fapi.binance.com";
-    const PAGE_SIZE = 100;     // 一頁 100 檔
-    const KLINE_LIMIT = 600;  // 一次抓 600 根 K 線
+    const PAGE_SIZE = 100;     // 一頁 100 檔（你目前設定）
+    const KLINE_LIMIT = 600;   // 一次抓 600 根 K 線
 
     let allSymbols = [];
     let tickerMap = {};       // symbol -> { pct: number }
@@ -388,21 +390,21 @@
       const ma60Data = calcMA(data, 60);
 
       const ma30Series = chart.addLineSeries({
-        color: "#f77c80", // 30MA
+        color: "#f77c80",
         lineWidth: 1,
         priceScaleId: "right",
         priceLineVisible: false,
         lastValueVisible: false,
       });
       const ma45Series = chart.addLineSeries({
-        color: "#ffb74d", // 45MA
+        color: "#ffb74d",
         lineWidth: 1,
         priceScaleId: "right",
         priceLineVisible: false,
         lastValueVisible: false,
       });
       const ma60Series = chart.addLineSeries({
-        color: "#66bb6a", // 60MA
+        color: "#66bb6a",
         lineWidth: 1,
         priceScaleId: "right",
         priceLineVisible: false,
@@ -413,7 +415,7 @@
       if (ma45Data.length) ma45Series.setData(ma45Data);
       if (ma60Data.length) ma60Series.setData(ma60Data);
 
-      // ⭐ 固定右邊預留空白，並預設看到約 350 根 K 棒
+      // 固定右邊預留空白，預設看到約 350 根 K 棒
       const totalBars = data.length;
       if (totalBars > 0) {
         const visibleBars = Math.min(350, totalBars);
