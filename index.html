@@ -451,10 +451,10 @@
         if (ma45Data.length) ma45Series.setData(ma45Data);
         if (ma60Data.length) ma60Series.setData(ma60Data);
 
-        // 固定右邊預留空白，預設看到約 350 根 K 棒
+        // 固定右邊預留空白，預設看到約 250 根 K 棒
         const totalBars = data.length;
         if (totalBars > 0) {
-          const visibleBars = Math.min(350, totalBars);
+          const visibleBars = Math.min(250, totalBars);
           const from = Math.max(0, totalBars - visibleBars - 15);
           const to = totalBars + 15;
           chart.timeScale().applyOptions({ rightOffset: 15 });
