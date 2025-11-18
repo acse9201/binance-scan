@@ -76,11 +76,11 @@
       white-space: nowrap;
     }
 
-    /* ⭐ 一列一個 K 線圖，旁邊留點空間 */
+    /* 一列一個 K 線圖，置中，兩邊等距 */
     #charts {
-      padding: 12px 12px 80px 12px; /* 底部多留一點空間避免貼頁尾 */
+      padding: 12px 12px 80px 12px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr); /* 單欄 */
+      grid-template-columns: minmax(0, 1fr);
       gap: 16px;
       justify-content: center;
     }
@@ -90,9 +90,11 @@
       border-radius: 10px;
       padding: 10px;
       background: #080808;
-      width: 85%;
+      width: 90%;
+      max-width: 2000px;
       box-sizing: border-box;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      margin: 0 auto; /* ⭐ 兩邊等寬，置中 */
     }
 
     .chart-title {
@@ -131,7 +133,7 @@
       color: #aaaaaa;
     }
 
-    /* ⭐ 底部分頁區 */
+    /* 底部分頁區 */
     #bottom-nav {
       padding: 10px 16px 16px 16px;
       border-top: 1px solid #333;
@@ -182,7 +184,7 @@
 
   <div id="charts"></div>
 
-  <!-- ⭐ 底部分頁按鈕 -->
+  <!-- 底部分頁按鈕 -->
   <footer id="bottom-nav">
     <button id="bottom-prev-btn" disabled>上一頁</button>
     <span id="bottom-page-info">第 0 / 0 頁</span>
@@ -191,7 +193,7 @@
 
   <script>
     const BASE_URL = "https://fapi.binance.com";
-    const PAGE_SIZE = 100;     // 一頁 100 檔（你目前設定）
+    const PAGE_SIZE = 100;     // 一頁 100 檔
     const KLINE_LIMIT = 600;   // 一次抓 600 根 K 線
 
     let allSymbols = [];
@@ -212,6 +214,11 @@
     const bottomPageInfoEl = document.getElementById("bottom-page-info");
     const intervalSelect = document.getElementById("interval");
     const sortSelect = document.getElementById("sort");
+
+    // ⭐ K 線快取（避免重複打 API）
+    const klinesCache = new Map();
+    // ⭐ Lazy Load 用的 IntersectionObserver
+    let observer = null;
 
     async function fetchFuturesSymbols() {
       const res = await fetch(`${BASE_URL}/fapi/v1/exchangeInfo`);
@@ -250,14 +257,19 @@
       return map;
     }
 
+    // ⭐ 取得 K 線（含快取）
     async function fetchKlines(symbol, interval, limit = KLINE_LIMIT) {
+      const key = `${symbol}_${interval}`;
+      if (klinesCache.has(key)) {
+        return klinesCache.get(key);
+      }
       const url = `${BASE_URL}/fapi/v1/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
       const res = await fetch(url);
       if (!res.ok) {
         throw new Error(`取得 ${symbol} K 線失敗，HTTP 狀態碼: ` + res.status);
       }
       const raw = await res.json();
-      return raw.map(c => ({
+      const data = raw.map(c => ({
         time: c[0] / 1000,
         open: parseFloat(c[1]),
         high: parseFloat(c[2]),
@@ -265,6 +277,8 @@
         close: parseFloat(c[4]),
         volume: parseFloat(c[5]),
       }));
+      klinesCache.set(key, data);
+      return data;
     }
 
     function calcMA(data, period) {
@@ -286,7 +300,8 @@
       return result;
     }
 
-    function createChart(symbol, interval, container, data, changePct) {
+    // ⭐ 建立卡片（先不畫圖，交給 Lazy Load）
+    function buildCard(symbol, interval, container, changePct) {
       const wrap = document.createElement("div");
       wrap.className = "chart-wrapper";
 
@@ -322,113 +337,147 @@
       wrap.appendChild(chartDiv);
       container.appendChild(wrap);
 
-      if (!window.LightweightCharts) {
-        console.error("LightweightCharts 尚未載入");
-        return;
+      // 把需要的資訊掛在 DOM 上，給 Lazy Load 用
+      wrap._symbol = symbol;
+      wrap._interval = interval;
+      wrap._pct = changePct;
+      wrap._chartDiv = chartDiv;
+      wrap._chartInstance = null;
+      wrap._loading = false;
+
+      if (observer) observer.observe(wrap);
+
+      return wrap;
+    }
+
+    // ⭐ 進入畫面時才實際畫圖
+    async function mountChart(card) {
+      if (card._chartInstance || card._loading) return;
+      card._loading = true;
+
+      try {
+        const symbol = card._symbol;
+        const interval = card._interval;
+        const data = await fetchKlines(symbol, interval, KLINE_LIMIT);
+
+        if (!card.isConnected) return;
+
+        const chartDiv = card._chartDiv;
+        const width = chartDiv.clientWidth || chartDiv.parentElement.clientWidth || 320;
+
+        const chart = LightweightCharts.createChart(chartDiv, {
+          width: width,
+          height: 350,
+          layout: {
+            background: { color: "#080808" },
+            textColor: "#dddddd",
+          },
+          grid: {
+            vertLines: { color: "#222" },
+            horzLines: { color: "#222" },
+          },
+          timeScale: {
+            timeVisible: true,
+            secondsVisible: false,
+          },
+          rightPriceScale: {
+            visible: true,
+          },
+        });
+
+        // K 棒顏色
+        const candleSeries = chart.addCandlestickSeries({
+          upColor: "#f7525f",
+          borderUpColor: "#f7525f",
+          wickUpColor: "#f7525f",
+          downColor: "#22ab94",
+          borderDownColor: "#22ab94",
+          wickDownColor: "#22ab94",
+        });
+        candleSeries.setData(data);
+
+        // 成交量
+        const volumeSeries = chart.addHistogramSeries({
+          priceScaleId: "volume",
+          priceFormat: { type: "volume" },
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        const volumeData = data.map(bar => ({
+          time: bar.time,
+          value: bar.volume,
+          color: bar.close >= bar.open ? "#f7525f" : "#22ab94",
+        }));
+
+        volumeSeries.setData(volumeData);
+
+        chart.priceScale("volume").applyOptions({
+          scaleMargins: {
+            top: 0.8,
+            bottom: 0,
+          },
+          alignLabels: false,
+        });
+
+        // 均線
+        const ma30Data = calcMA(data, 30);
+        const ma45Data = calcMA(data, 45);
+        const ma60Data = calcMA(data, 60);
+
+        const ma30Series = chart.addLineSeries({
+          color: "#f77c80",
+          lineWidth: 1,
+          priceScaleId: "right",
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        const ma45Series = chart.addLineSeries({
+          color: "#ffb74d",
+          lineWidth: 1,
+          priceScaleId: "right",
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+        const ma60Series = chart.addLineSeries({
+          color: "#66bb6a",
+          lineWidth: 1,
+          priceScaleId: "right",
+          priceLineVisible: false,
+          lastValueVisible: false,
+        });
+
+        if (ma30Data.length) ma30Series.setData(ma30Data);
+        if (ma45Data.length) ma45Series.setData(ma45Data);
+        if (ma60Data.length) ma60Series.setData(ma60Data);
+
+        // 固定右邊預留空白，預設看到約 350 根 K 棒
+        const totalBars = data.length;
+        if (totalBars > 0) {
+          const visibleBars = Math.min(350, totalBars);
+          const from = Math.max(0, totalBars - visibleBars - 15);
+          const to = totalBars + 15;
+          chart.timeScale().applyOptions({ rightOffset: 15 });
+          chart.timeScale().setVisibleLogicalRange({ from, to });
+        }
+
+        card._chartInstance = chart;
+      } catch (e) {
+        console.error(`繪製 ${card._symbol} 圖表失敗:`, e);
+      } finally {
+        card._loading = false;
       }
+    }
 
-      const width = chartDiv.clientWidth || chartDiv.parentElement.clientWidth || 320;
-
-      const chart = LightweightCharts.createChart(chartDiv, {
-        width: width,
-        height: chartDiv.clientHeight || 400,
-        layout: {
-          background: { color: "#080808" },
-          textColor: "#dddddd",
-        },
-        grid: {
-          vertLines: { color: "#222" },
-          horzLines: { color: "#222" },
-        },
-        timeScale: {
-          timeVisible: true,
-          secondsVisible: false,
-        },
-        rightPriceScale: {
-          visible: true,
-        },
-      });
-
-      // K 棒顏色：上漲 #f7525f、下跌 #22ab94
-      const candleSeries = chart.addCandlestickSeries({
-        upColor: "#f7525f",
-        borderUpColor: "#f7525f",
-        wickUpColor: "#f7525f",
-        downColor: "#22ab94",
-        borderDownColor: "#22ab94",
-        wickDownColor: "#22ab94",
-      });
-      candleSeries.setData(data);
-
-      // 成交量
-      const volumeSeries = chart.addHistogramSeries({
-        priceScaleId: "volume",
-        priceFormat: { type: "volume" },
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-
-      const volumeData = data.map(bar => ({
-        time: bar.time,
-        value: bar.volume,
-        color: bar.close >= bar.open ? "#f7525f" : "#22ab94",
-      }));
-
-      volumeSeries.setData(volumeData);
-
-      chart.priceScale("volume").applyOptions({
-        scaleMargins: {
-          top: 0.8,
-          bottom: 0,
-        },
-        alignLabels: false,
-      });
-
-      // 均線
-      const ma30Data = calcMA(data, 30);
-      const ma45Data = calcMA(data, 45);
-      const ma60Data = calcMA(data, 60);
-
-      const ma30Series = chart.addLineSeries({
-        color: "#f77c80",
-        lineWidth: 1,
-        priceScaleId: "right",
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      const ma45Series = chart.addLineSeries({
-        color: "#ffb74d",
-        lineWidth: 1,
-        priceScaleId: "right",
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-      const ma60Series = chart.addLineSeries({
-        color: "#66bb6a",
-        lineWidth: 1,
-        priceScaleId: "right",
-        priceLineVisible: false,
-        lastValueVisible: false,
-      });
-
-      if (ma30Data.length) ma30Series.setData(ma30Data);
-      if (ma45Data.length) ma45Series.setData(ma45Data);
-      if (ma60Data.length) ma60Series.setData(ma60Data);
-
-      // 固定右邊預留空白，預設看到約 350 根 K 棒
-      const totalBars = data.length;
-      if (totalBars > 0) {
-        const visibleBars = Math.min(350, totalBars);
-        const from = Math.max(0, totalBars - visibleBars - 15);
-        const to = totalBars + 15;
-        chart.timeScale().applyOptions({ rightOffset: 15 });
-        chart.timeScale().setVisibleLogicalRange({ from, to });
+    // ⭐ 滑出畫面就卸載 chart，省記憶體
+    function unmountChart(card) {
+      if (card._chartInstance) {
+        card._chartInstance.remove();
+        card._chartInstance = null;
       }
-
-      window.addEventListener("resize", () => {
-        const newWidth = chartDiv.clientWidth || chartDiv.parentElement.clientWidth || 320;
-        chart.applyOptions({ width: newWidth });
-      });
+      if (card._chartDiv) {
+        card._chartDiv.innerHTML = "";
+      }
     }
 
     function applySorting() {
@@ -478,42 +527,36 @@
       const totalPages = Math.ceil(allSymbols.length / PAGE_SIZE);
       if (pageIndex < 0 || pageIndex >= totalPages) return;
 
+      window.scrollTo({ top: 0, behavior: "smooth" });  // ⭐ 每次換頁都把畫面滑回頂部
+
       const token = ++currentLoadToken;
       currentPage = pageIndex;
       updatePaginationUI();
 
+      // 清掉舊頁面的圖表與監聽
+      for (const child of Array.from(chartsEl.children)) {
+        if (observer) observer.unobserve(child);
+        unmountChart(child);
+      }
       chartsEl.innerHTML = "";
 
       const start = pageIndex * PAGE_SIZE;
       const end = Math.min(start + PAGE_SIZE, allSymbols.length);
       const targets = allSymbols.slice(start, end);
 
-      statusEl.textContent = `載入第 ${pageIndex + 1} 頁中…（${targets.length} 檔，interval: ${currentInterval}）`;
 
-      let done = 0;
       for (const sym of targets) {
         if (token !== currentLoadToken) {
           console.log(`停止舊頁面載入：第 ${pageIndex + 1} 頁`);
           return;
         }
-
-        try {
-          const klines = await fetchKlines(sym, currentInterval, KLINE_LIMIT);
-          const pct = tickerMap[sym]?.pct ?? null;
-          if (klines.length > 0) {
-            createChart(sym, currentInterval, chartsEl, klines, pct);
-          } else {
-            console.warn(`symbol: ${sym} 無 K 線資料`);
-          }
-        } catch (err) {
-          console.error(`載入 ${sym} 失敗:`, err);
-        }
-        done++;
-        statusEl.textContent = `載入第 ${pageIndex + 1} 頁中… ${done} / ${targets.length}`;
-        await new Promise(r => setTimeout(r, 150));
+        const pct = tickerMap[sym]?.pct ?? null;
+        buildCard(sym, currentInterval, chartsEl, pct);
       }
 
-      statusEl.textContent = `第 ${pageIndex + 1} 頁載入完成（${done} 檔，interval: ${currentInterval}）。`;
+      const startNum = start + 1;
+      const endNum = end;
+      const totalNum = allSymbols.length;
     }
 
     async function scan() {
@@ -584,6 +627,36 @@
       updatePaginationUI();
       currentLoadToken++;
       await loadPage(0);
+    });
+
+    // ⭐ Lazy Load 的 IntersectionObserver 初始化
+    if ("IntersectionObserver" in window) {
+      observer = new IntersectionObserver((entries) => {
+        for (const entry of entries) {
+          const card = entry.target;
+          if (entry.isIntersecting) {
+            mountChart(card);   // 進畫面 → 畫圖
+          } else {
+            unmountChart(card); // 出畫面 → 卸載圖
+          }
+        }
+      }, {
+        root: null,
+        threshold: 0.1,
+      });
+    } else {
+      console.warn("此瀏覽器不支援 IntersectionObserver，Lazy Load 失效。");
+    }
+
+    // 視窗 resize 時，調整所有已建立的圖表寬度
+    window.addEventListener("resize", () => {
+      const cards = document.querySelectorAll(".chart-wrapper");
+      cards.forEach(card => {
+        if (card._chartInstance && card._chartDiv) {
+          const newWidth = card._chartDiv.clientWidth || card._chartDiv.parentElement.clientWidth || 320;
+          card._chartInstance.applyOptions({ width: newWidth });
+        }
+      });
     });
 
     updatePaginationUI();
