@@ -396,6 +396,22 @@
         });
         candleSeries.setData(data);
 
+        // ⭐ 在這裡插入台灣時間 formatter
+chart.applyOptions({
+  localization: {
+    timeFormatter: (time) => {
+      const date = new Date(time * 1000);
+      const tw = new Date(date.getTime() + 0 * 60 * 60 * 1000);
+      const yyyy = tw.getFullYear();
+      const mm = (tw.getMonth() + 1).toString().padStart(2, "0");
+      const dd = tw.getDate().toString().padStart(2, "0");
+      const hh = tw.getHours().toString().padStart(2, "0");
+      const mi = tw.getMinutes().toString().padStart(2, "0");
+      return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
+    }
+  }
+});
+
         // 成交量
         const volumeSeries = chart.addHistogramSeries({
           priceScaleId: "volume",
