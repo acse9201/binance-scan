@@ -1,3 +1,6 @@
+<!--20251210_v009 = 新增突破篩選小工具，最近20根K內，有創過最近120根新高的標的-->
+
+
 <!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -94,7 +97,7 @@
       max-width: 2000px;
       box-sizing: border-box;
       box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
-      margin: 0 auto; /* ⭐ 兩邊等寬，置中 */
+      margin: 0 auto; /* 兩邊等寬，置中 */
     }
 
     .chart-title {
@@ -158,6 +161,12 @@
   <header>
     <h1>幣安合約掃圖工具</h1>
 
+    <label for="mode">模式：</label>
+    <select id="mode">
+      <option value="scan">掃圖（全部）</option>
+      <option value="filter">篩選（突破）</option>
+    </select>
+
     <label for="interval">時框：</label>
     <select id="interval">
       <option value="15m">15 分 K</option>
@@ -173,7 +182,7 @@
       <option value="pct_desc">依 24h 漲跌幅</option>
     </select>
 
-    <button id="scan-btn">掃圖</button>
+    <button id="scan-btn">開始</button>
 
     <button id="prev-btn" disabled>上一頁</button>
     <button id="next-btn" disabled>下一頁</button>
@@ -196,10 +205,14 @@
     const PAGE_SIZE = 100;     // 一頁 100 檔
     const KLINE_LIMIT = 600;   // 一次抓 600 根 K 線
 
+    // rawSymbols：所有 USDT 永續；allSymbols：目前要顯示（全部 or 突破）
+    let rawSymbols = [];
     let allSymbols = [];
     let tickerMap = {};       // symbol -> { pct: number }
+
     let currentPage = 0;
     let currentInterval = "15m";
+    let currentMode = "scan"; // "scan" or "filter"
     let isLoading = false;
     let currentLoadToken = 0;
     let sortMode = "symbol";
@@ -214,10 +227,11 @@
     const bottomPageInfoEl = document.getElementById("bottom-page-info");
     const intervalSelect = document.getElementById("interval");
     const sortSelect = document.getElementById("sort");
+    const modeSelect = document.getElementById("mode");
 
-    // ⭐ K 線快取（避免重複打 API）
+    // K 線快取（避免重複打 API）
     const klinesCache = new Map();
-    // ⭐ Lazy Load 用的 IntersectionObserver
+    // Lazy Load 用的 IntersectionObserver
     let observer = null;
 
     async function fetchFuturesSymbols() {
@@ -257,7 +271,7 @@
       return map;
     }
 
-    // ⭐ 取得 K 線（含快取）
+    // 取得 K 線（含快取）
     async function fetchKlines(symbol, interval, limit = KLINE_LIMIT) {
       const key = `${symbol}_${interval}`;
       if (klinesCache.has(key)) {
@@ -300,7 +314,53 @@
       return result;
     }
 
-    // ⭐ 建立卡片（先不畫圖，交給 Lazy Load）
+    // 判斷「最近 20 根 K 是否包含最近 120 根的最高價」
+    function checkBreakoutLast20Of120(data) {
+      if (!data || data.length < 120) return false;
+
+      const len = data.length;
+      const recent120 = data.slice(len - 120);     // 最近 120 根（包含最新）
+      const recent20  = recent120.slice(-20);      // 最近 20 根
+
+      let h120 = -Infinity;
+      for (const bar of recent120) {
+        if (bar.high > h120) h120 = bar.high;
+      }
+
+      let h20 = -Infinity;
+      for (const bar of recent20) {
+        if (bar.high > h20) h20 = bar.high;
+      }
+
+      // 最近 20 根內創最近 120 根新高
+      return h20 === h120;
+    }
+
+    // 針對所有 symbol 做突破篩選
+    async function filterBreakoutSymbols(symbols, interval) {
+      const result = [];
+      let checked = 0;
+
+      for (const sym of symbols) {
+        try {
+          const data = await fetchKlines(sym, interval, KLINE_LIMIT);
+          if (checkBreakoutLast20Of120(data)) {
+            result.push(sym);
+          }
+        } catch (e) {
+          console.error("篩選 K 線失敗：", sym, e);
+        }
+
+        checked++;
+        // 簡易進度
+        statusEl.textContent = `篩選中（${checked} / ${symbols.length}）`;
+        await new Promise(r => setTimeout(r)); // 讓畫面有機會更新
+      }
+
+      return result;
+    }
+
+    // 建立卡片（先不畫圖，交給 Lazy Load）
     function buildCard(symbol, interval, container, changePct) {
       const wrap = document.createElement("div");
       wrap.className = "chart-wrapper";
@@ -350,7 +410,7 @@
       return wrap;
     }
 
-    // ⭐ 進入畫面時才實際畫圖
+    // 進入畫面時才實際畫圖
     async function mountChart(card) {
       if (card._chartInstance || card._loading) return;
       card._loading = true;
@@ -395,22 +455,6 @@
           wickDownColor: "#22ab94",
         });
         candleSeries.setData(data);
-
-        // ⭐ 在這裡插入台灣時間 formatter
-chart.applyOptions({
-  localization: {
-    timeFormatter: (time) => {
-      const date = new Date(time * 1000);
-      const tw = new Date(date.getTime() + 0 * 60 * 60 * 1000);
-      const yyyy = tw.getFullYear();
-      const mm = (tw.getMonth() + 1).toString().padStart(2, "0");
-      const dd = tw.getDate().toString().padStart(2, "0");
-      const hh = tw.getHours().toString().padStart(2, "0");
-      const mi = tw.getMinutes().toString().padStart(2, "0");
-      return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
-    }
-  }
-});
 
         // 成交量
         const volumeSeries = chart.addHistogramSeries({
@@ -485,7 +529,7 @@ chart.applyOptions({
       }
     }
 
-    // ⭐ 滑出畫面就卸載 chart，省記憶體
+    // 滑出畫面就卸載 chart，省記憶體
     function unmountChart(card) {
       if (card._chartInstance) {
         card._chartInstance.remove();
@@ -543,7 +587,7 @@ chart.applyOptions({
       const totalPages = Math.ceil(allSymbols.length / PAGE_SIZE);
       if (pageIndex < 0 || pageIndex >= totalPages) return;
 
-      window.scrollTo({ top: 0, behavior: "smooth" });  // ⭐ 每次換頁都把畫面滑回頂部
+      window.scrollTo({ top: 0, behavior: "smooth" });
 
       const token = ++currentLoadToken;
       currentPage = pageIndex;
@@ -560,7 +604,6 @@ chart.applyOptions({
       const end = Math.min(start + PAGE_SIZE, allSymbols.length);
       const targets = allSymbols.slice(start, end);
 
-
       for (const sym of targets) {
         if (token !== currentLoadToken) {
           console.log(`停止舊頁面載入：第 ${pageIndex + 1} 頁`);
@@ -569,41 +612,70 @@ chart.applyOptions({
         const pct = tickerMap[sym]?.pct ?? null;
         buildCard(sym, currentInterval, chartsEl, pct);
       }
-
-      const startNum = start + 1;
-      const endNum = end;
-      const totalNum = allSymbols.length;
     }
 
+    // 主流程：依模式執行「掃圖」或「篩選」
     async function scan() {
       if (isLoading) return;
       isLoading = true;
       currentInterval = intervalSelect.value;
+      currentMode = modeSelect.value;
       statusEl.textContent = "取得合約清單中…";
 
       currentLoadToken++;
 
       try {
-        if (allSymbols.length === 0) {
-          allSymbols = await fetchFuturesSymbols();
-          console.log("取得 symbols 數量:", allSymbols.length);
+        // 取得全部合約（只打一次 API）
+        if (rawSymbols.length === 0) {
+          rawSymbols = await fetchFuturesSymbols();
+          console.log("取得 symbols 數量:", rawSymbols.length);
         }
 
-        if (allSymbols.length === 0) {
+        if (rawSymbols.length === 0) {
           statusEl.textContent = "沒有取得到任何 USDT 永續合約 symbol。";
           isLoading = false;
           updatePaginationUI();
           return;
         }
 
-        statusEl.textContent = "取得 24h 漲跌幅中…";
-        tickerMap = await fetch24hTickers(allSymbols);
+        // 取得 24h 漲跌幅（失敗就無漲跌幅，但繼續）
+        try {
+          statusEl.textContent = "取得 24h 漲跌幅中…";
+          tickerMap = await fetch24hTickers(rawSymbols);
+        } catch (e) {
+          console.error("取得 24h 失敗：", e);
+          tickerMap = {};
+          statusEl.textContent = "取得 24h 失敗，將不顯示漲跌幅，繼續處理…";
+        }
+
+        if (currentMode === "filter") {
+          // 突破篩選
+          statusEl.textContent = `依 ${currentInterval} 篩選突破中…`;
+          const breakoutSymbols = await filterBreakoutSymbols(rawSymbols, currentInterval);
+          allSymbols = breakoutSymbols;
+
+          if (allSymbols.length === 0) {
+            statusEl.textContent = `沒有符合「最近 20 根內創最近 120 根新高」條件的標的（${currentInterval}）。`;
+            isLoading = false;
+            chartsEl.innerHTML = "";
+            updatePaginationUI();
+            return;
+          }
+        } else {
+          // 純掃圖：全部顯示
+          allSymbols = rawSymbols.slice();
+        }
 
         sortMode = sortSelect.value;
         applySorting();
         updatePaginationUI();
 
-        statusEl.textContent = `共 ${allSymbols.length} 檔 USDT 永續合約，準備載入第 1 頁…`;
+        if (currentMode === "filter") {
+          statusEl.textContent = `共 ${allSymbols.length} 檔符合突破條件，準備載入第 1 頁…`;
+        } else {
+          statusEl.textContent = `共 ${allSymbols.length} 檔 USDT 永續合約，準備載入第 1 頁…`;
+        }
+
         isLoading = false;
         await loadPage(0);
 
@@ -645,7 +717,7 @@ chart.applyOptions({
       await loadPage(0);
     });
 
-    // ⭐ Lazy Load 的 IntersectionObserver 初始化
+    // Lazy Load 的 IntersectionObserver 初始化
     if ("IntersectionObserver" in window) {
       observer = new IntersectionObserver((entries) => {
         for (const entry of entries) {
